@@ -12,6 +12,7 @@ First host in an inventory becomes the hub; the rest become peers. Remote hosts 
 ## Quick start
 
 ```bash
+chmod +x wireconf
 ./wireconf init                # 1. Scaffold inventory + wireconf.env in the current directory
 ```
 
