@@ -4,6 +4,10 @@
 
 WC_LOG_FILE=""
 
+wc_log_state_file() {
+  printf '%s\n' "${WC_INVENTORY}.wireconf.last-state"
+}
+
 # Append one line: YYYY-MM-DDTHH:MM:SS ACTION key=value ...
 wc_log_action() {
   [[ -n "${WC_LOG_FILE:-}" ]] || WC_LOG_FILE="${WC_INVENTORY}.wireconf.log"
@@ -24,7 +28,9 @@ wc_log_hosts_csv() {
 # Falls back to legacy *.wireconf.last-targets if the log does not exist yet.
 wc_log_read_last_apply() {
   WC_APPLY_PREV_TARGETS=()
+  WC_SSH_PORT_HINTS=()
   [[ -n "${WC_LOG_FILE:-}" ]] || WC_LOG_FILE="${WC_INVENTORY}.wireconf.log"
+  wc_log_read_last_apply_state
 
   if [[ -f "$WC_LOG_FILE" ]]; then
     local last hosts
@@ -48,6 +54,29 @@ wc_log_read_last_apply() {
       WC_APPLY_PREV_TARGETS+=("$line")
     done <"$legacy"
   fi
+}
+
+wc_log_read_last_apply_state() {
+  local state_file line host port
+  state_file="$(wc_log_state_file)"
+  [[ -f "$state_file" ]] || return 0
+  while IFS=$'\t' read -r host port || [[ -n "${host:-}${port:-}" ]]; do
+    [[ -n "${host:-}" ]] || continue
+    [[ "${port:-}" =~ ^[0-9]+$ ]] || continue
+    # shellcheck disable=SC2034
+    WC_SSH_PORT_HINTS["$host"]="$port"
+  done <"$state_file"
+}
+
+wc_log_write_last_apply_state() {
+  local state_file tmp i
+  state_file="$(wc_log_state_file)"
+  tmp="${state_file}.tmp.$$"
+  : >"$tmp"
+  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+    printf '%s\t%s\n' "${WC_SSH_TARGETS[$i]}" "${WC_SSH_PORTS[$i]}" >>"$tmp"
+  done
+  mv -f -- "$tmp" "$state_file"
 }
 
 # Remove legacy snapshot after a successful log write (one-time migration).

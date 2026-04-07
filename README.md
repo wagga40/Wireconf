@@ -23,7 +23,7 @@ ubuntu@peer1.example.com 2222 no
 root@peer2.example.com yes
 ```
 
-**(Optional)**  Edit `wireconf.env` — set `WG_HUB_ENDPOINT` to the hub's public IP or DNS name if it differs from the first address in `inventory`:
+**(Optional)**  Edit `wireconf.env` — set `WG_HUB_ENDPOINT` to the hub's public IP or DNS name if it differs from the host portion of the first line in `inventory`:
 
 ```bash
 WG_HUB_ENDPOINT=203.0.113.10
@@ -80,9 +80,9 @@ Core settings live in `wireconf.env` (auto-loaded) or as CLI flags. See `./wirec
 |---------|---------|---------|
 | `INVENTORY` / `--inventory` / `-I` | `inventory` | Path to the host list |
 | `WG_INTERFACE` / `--iface` / `-n` | `wg0` | Interface and systemd unit name (1–15 chars) |
-| `WG_NETWORK` / `--network` / `-c` | `10.200.0.0/24` | VPN IPv4 CIDR (`/16`–`/30`) |
+| `WG_NETWORK` / `--network` / `-c` | `10.200.0.0/24` | VPN IPv4 CIDR (`/16`–`/30`, must fit all usable host addresses) |
 | `WG_PORT` / `--port` / `-p` | `51820` | Hub UDP listen port |
-| `WG_HUB_ENDPOINT` / `-H` | *(hub host)* | Public address peers use for `Endpoint=` |
+| `WG_HUB_ENDPOINT` / `-H` | *(hub host, SSH user stripped)* | Public address peers use for `Endpoint=` |
 | `AUTO_START` / `--auto-start` / `-a` | `yes` | Enable `wg-quick@` on boot |
 | `FULL_TUNNEL_DEFAULT` / `-t` | `no` | Default full-tunnel mode for inventory lines |
 | `WG_KEEPALIVE` / `--keepalive` / `-k` | `25` | PersistentKeepalive seconds (0 = off) |

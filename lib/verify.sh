@@ -2,6 +2,16 @@
 # shellcheck shell=bash
 # Connectivity checks: recent WireGuard handshakes and hub -> peer ping.
 
+wc_remote_epoch() {
+  local target="$1"
+  local now
+  now="$(wc_run_sudo "$target" "date +%s")" || return 1
+  now="${now//$'\r'/}"
+  now="${now//$'\n'/}"
+  [[ "$now" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$now"
+}
+
 verify_all() {
   local i hub="${WC_SSH_TARGETS[0]}"
   wc_resolve_hub_endpoint_from_inventory || true
@@ -97,7 +107,7 @@ verify_handshakes() {
   local target="$1"
   local now age pk t raw threshold
   threshold="${WC_HANDSHAKE_TIMEOUT:-300}"
-  now="$(date +%s)"
+  now="$(wc_remote_epoch "$target")" || die "Could not read current time on $target"
   raw="$(wc_run_sudo "$target" "wg show $(printf '%q' "$WC_IFACE") latest-handshakes 2>/dev/null" || true)"
   if [[ -z "${raw//[[:space:]]/}" ]]; then
     die "No WireGuard data on $target (interface ${WC_IFACE} down?)"
@@ -153,7 +163,10 @@ status_all() {
 status_one_host() {
   local target="$1" threshold="$2"
   local now age pk t raw iface_up
-  now="$(date +%s)"
+  now="$(wc_remote_epoch "$target")" || {
+    log_err "${target}  interface=${WC_IFACE}  status=clock-unavailable"
+    return 1
+  }
   iface_up="$(wc_run_sudo "$target" "wg show $(printf '%q' "$WC_IFACE") >/dev/null 2>&1 && echo yes || echo no" 2>/dev/null)" || iface_up="unreachable"
   if [[ "$iface_up" == "unreachable" ]]; then
     log_err "${target}  interface=${WC_IFACE}  status=unreachable"

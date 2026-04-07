@@ -153,6 +153,7 @@ WC_SHOW_REDACT=0
 declare -a WC_SSH_TARGETS=()
 declare -a WC_SSH_PORTS=()
 declare -a WC_FULL_TUNNEL=()
+declare -A WC_SSH_PORT_HINTS=()
 WC_HUB_SSH_TARGET=""
 
 is_local_host() {
@@ -160,6 +161,11 @@ is_local_host() {
     localhost | 127.0.0.1 | ::1) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+wc_wireguard_endpoint_host() {
+  local target="$1"
+  printf '%s\n' "${target##*@}"
 }
 
 # Run remote/local sudo command; on failure log hints unless quiet (use quiet for expected-failure probes).
@@ -424,6 +430,10 @@ wc_ssh_port_for_target() {
       return 0
     fi
   done
+  if [[ -n "${WC_SSH_PORT_HINTS[$want]+x}" ]]; then
+    echo "${WC_SSH_PORT_HINTS[$want]}"
+    return 0
+  fi
   echo "$WC_SSH_PORT_DEFAULT"
 }
 
@@ -461,7 +471,8 @@ wg_allocate_ips() {
     hostbits = 32 - prefix
     net = int(raw / (2^hostbits)) * (2^hostbits)
     maxhosts = 2^hostbits
-    if (total >= maxhosts) exit 5
+    usable = maxhosts - 2
+    if (total > usable) exit 5
     base = net + 1
     for (i = 0; i < total; i++) {
       print i, num2ip(base + i)
@@ -528,7 +539,7 @@ wc_resolve_hub_endpoint_from_inventory() {
   [[ -n "$WC_HUB_ENDPOINT" ]] && return 1
   wc_any_remote_peer || return 1
   [[ -n "${WC_HUB_SSH_TARGET:-}" ]] || die "Inventory hub (first line) missing for default WireGuard endpoint"
-  WC_HUB_ENDPOINT="$WC_HUB_SSH_TARGET"
+  WC_HUB_ENDPOINT="$(wc_wireguard_endpoint_host "$WC_HUB_SSH_TARGET")"
   return 0
 }
 

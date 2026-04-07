@@ -164,16 +164,13 @@ wireconf_apply() {
   wireconf_run_plan_prechecks
   wc_build_ip_map
   if ! wc_apply_prepare_prompts; then
-    return 0
+    return 1
   fi
   wc_apply_collect_removed_hosts
   wc_apply_teardown_removed_hosts
   preflight_all_hosts
   local i jobs=0 max_j="${WC_PARALLEL:-1}"
   [[ "$max_j" =~ ^[0-9]+$ ]] && [[ "$max_j" -ge 1 ]] || max_j=1
-  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
-    wc_run_sudo "${WC_SSH_TARGETS[$i]}" "wg-quick down $(printf '%q' "$WC_IFACE") 2>/dev/null || true"
-  done
   wg_build_all
 
   if [[ "$max_j" -gt 1 ]]; then
@@ -235,6 +232,7 @@ wireconf_apply() {
 
   wg_cleanup_stage
   trap - EXIT
+  wc_log_write_last_apply_state
   wc_log_action apply "iface=${WC_IFACE} hosts=$(wc_log_hosts_csv)"
   wc_log_cleanup_legacy
   log_info "apply completed."
@@ -555,4 +553,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${WIRECONF_SOURCE_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi
