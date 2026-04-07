@@ -1,0 +1,558 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+set -euo pipefail
+
+WIRECONF_VERSION="0.2.0"
+_WIRECONF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$_WIRECONF_ROOT/lib/common.sh"
+# shellcheck source=lib/inventory_edit.sh
+source "$_WIRECONF_ROOT/lib/inventory_edit.sh"
+# shellcheck source=lib/nat.sh
+source "$_WIRECONF_ROOT/lib/nat.sh"
+# shellcheck source=lib/preflight.sh
+source "$_WIRECONF_ROOT/lib/preflight.sh"
+# shellcheck source=lib/wireguard.sh
+source "$_WIRECONF_ROOT/lib/wireguard.sh"
+# shellcheck source=lib/systemd.sh
+source "$_WIRECONF_ROOT/lib/systemd.sh"
+# shellcheck source=lib/apply_prompts.sh
+source "$_WIRECONF_ROOT/lib/apply_prompts.sh"
+# shellcheck source=lib/verify.sh
+source "$_WIRECONF_ROOT/lib/verify.sh"
+# shellcheck source=lib/plan_checks.sh
+source "$_WIRECONF_ROOT/lib/plan_checks.sh"
+
+# figlet -f small Wireconf (short banner; no runtime figlet dependency)
+wireconf_print_banner() {
+  cat <<'EOF' >&2
+__      ___                      __ 
+\ \    / (_)_ _ ___ __ ___ _ _  / _|
+ \ \/\/ /| | '_/ -_) _/ _ \ ' \|  _|
+  \_/\_/ |_|_| \___\__\___/_||_|_|  
+
+EOF
+}
+
+usage() {
+  wireconf_init_colors
+  printf '\n' >&2
+  log_help_usage_line "wireconf [options] <command>"
+  printf '\n' >&2
+  log_help_title "Options (long and short):"
+  log_help_option "-e, --env-file FILE" "load env before other flags (auto: ./wireconf.env)"
+  log_help_option "-I, --inventory FILE" "host list (hub first)"
+  log_help_option "-n, --iface NAME" "WireGuard interface / unit name"
+  log_help_option "-c, --network CIDR" "VPN IPv4 range"
+  log_help_option "-H, --hub-endpoint HOST" "peers' WireGuard Endpoint="
+  log_help_option "-p, --port N" "hub WireGuard UDP listen port"
+  log_help_option "-S, --ssh-port P" "default SSH port (1-65535)"
+  log_help_option "--ssh-accept-new" "auto-add new SSH host keys to known_hosts (StrictHostKeyChecking=accept-new)"
+  log_help_option "-a, --auto-start yes|no" "wg-quick@ on boot"
+  log_help_option "-t, --full-tunnel-default y|n" "default per-line full tunnel"
+  log_help_option "-k, --keepalive N" "PersistentKeepalive seconds (0=off, default 25)"
+  log_help_option "--parallel N" "concurrent SSH operations (default 1)"
+  log_help_option "-f, --force" "overwrite existing wg state"
+  log_help_option "-b, --backup-dir DIR" "backup path before replace"
+  log_help_option "-y, --yes" "auto-confirm prompts (apt wireguard, apply peer/replace/start, clean; or WIRECONF_YES=1)"
+  log_help_option "--redact" "with show: print configs with PrivateKey lines replaced (safer for logs/pipes)"
+  log_help_option "-V, --version" "print version and exit"
+  log_help_option "-h, --help" "show this help"
+  printf '\n' >&2
+  log_help_title "Commands (typical order):"
+  log_help_cmd "init" "copy examples/ into current dir (skip existing files)"
+  log_help_cmd "plan" "operator basics, SSH, Debian/Ubuntu OS, wg tools, targets; layout, preflight"
+  log_help_cmd "show" "generate and display configs without deploying (see --redact)"
+  log_help_cmd "apply" "prechecks, prompts, teardown removed hosts vs last snapshot, deploy; -y skips prompts"
+  log_help_cmd "verify | test" "handshakes, hub->peer pings, ASCII topology (strict)"
+  log_help_cmd "status" "non-fatal per-host interface and peer health check"
+  log_help_cmd "teardown" "stop and disable WireGuard on all inventory hosts"
+  log_help_cmd "clean" "remove inventory, \${INVENTORY}.wireconf.* sidecars, ./wireconf.env (prompt; -y skips)"
+  log_help_cmd "add-peer" "optional: append one inventory line (or edit inventory by hand)"
+  log_help_cmd "remove-peer" "optional: drop line by HOST (or edit inventory by hand)"
+  printf '\n' >&2
+  log_help_title "Inventory:"
+  log_help_para "First line = hub (localhost allowed). Remaining lines = peers."
+  log_help_para "Each line: host [ssh_port] [full_tunnel]. Numeric 2nd field = SSH port."
+  log_help_para "Peers may be added or removed by editing the inventory file directly; add-peer/remove-peer are optional helpers with the same rules."
+  log_help_para "VPN IPs follow line order; add-peer only appends (manual edits can reorder). Every apply regenerates all WireGuard keys."
+  log_help_para "First -e/--env-file in argv loads before other flags; ./wireconf.env auto-loads."
+  printf '\n' >&2
+  log_help_title "Environment (defaults):"
+  log_help_para "INVENTORY, WG_INTERFACE, WG_NETWORK, WG_PORT, WG_HUB_ENDPOINT, SSH_PORT=22,"
+  log_help_para "SSH_ACCEPT_NEW=no, AUTO_START=yes, FULL_TUNNEL_DEFAULT=no, SSH_OPTS, WG_PEER_DNS, WG_HUB_EGRESS,"
+  log_help_para "WG_KEEPALIVE=25, WG_MTU, WG_SPLIT_DNS, WG_HANDSHAKE_TIMEOUT=300, WG_PARALLEL=1,"
+  log_help_para "WIRECONF_YES=1 (same as -y: skip apt, apply inventory prompts, and clean confirmation)."
+  printf '\n' >&2
+}
+
+# Load env file from argv before other parsing so defaults apply, then CLI can override.
+# Falls back to wireconf.env in $PWD when no explicit -e is given.
+wireconf_bootstrap_env_from_argv() {
+  local -a argv=("$@")
+  local i
+  for ((i = 0; i < ${#argv[@]}; i++)); do
+    if [[ "${argv[$i]}" == "--env-file" || "${argv[$i]}" == "-e" ]]; then
+      local j=$((i + 1))
+      [[ "$j" -lt ${#argv[@]} ]] || die "-e/--env-file needs a path"
+      WC_ENV_FILE="${argv[$j]}"
+      WC_ENV_FILE_EXPLICIT=1
+      load_env_file "$WC_ENV_FILE"
+      return 0
+    fi
+  done
+  if [[ -f "${PWD}/wireconf.env" ]]; then
+    WC_ENV_FILE="${PWD}/wireconf.env"
+    load_env_file "$WC_ENV_FILE"
+    log_info "Auto-loaded ${PWD}/wireconf.env (use -e to override)"
+  fi
+  return 0
+}
+
+wireconf_run_plan_prechecks() {
+  printf '\n' >&2
+  log_info "Operator basics (ssh, scp, awk, bash)..."
+  plan_check_operator_basics || die "Operator machine is missing required commands."
+  printf '\n' >&2
+  log_info "SSH connectivity..."
+  plan_check_ssh_connectivity || die "SSH connectivity check failed."
+  printf '\n' >&2
+  log_info "Debian/Ubuntu on each inventory host..."
+  plan_check_debian_family_all || die "OS check failed (wireconf targets Debian-family only)."
+  printf '\n' >&2
+  log_info "WireGuard key generation (operator or hub)..."
+  plan_check_operator_wg_keygen || die "WireGuard tools / keygen check failed."
+  printf '\n' >&2
+  log_info "Tools on each target (sudo)..."
+  plan_check_target_tools || die "Target tool check failed."
+}
+
+wireconf_plan() {
+  local i st
+  log_info "Interface: ${WC_IFACE}  Network: ${WC_NETWORK}  Port: ${WC_PORT}"
+  if wc_resolve_hub_endpoint_from_inventory; then
+    log_warn "WG_HUB_ENDPOINT / --hub-endpoint not set: remote peers will use the inventory hub host (${WC_HUB_ENDPOINT}) as WireGuard Endpoint=; set WG_HUB_ENDPOINT or -H explicitly if peers cannot reach that address."
+  fi
+  log_info "Hub endpoint (for peers): ${WC_HUB_ENDPOINT:-<unset>}"
+  log_info "Auto start at boot: $(normalize_bool "$WC_AUTO_START")"
+  log_info "Default full tunnel: $(normalize_bool "$WC_FULL_TUNNEL_DEFAULT")"
+  log_info "Default SSH port: ${WC_SSH_PORT_DEFAULT}"
+  wireconf_run_plan_prechecks
+  printf '\n' >&2
+  wc_build_ip_map
+  log_info "Allocated VPN addresses:"
+  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+    log_detail "[${i}] ${WC_SSH_TARGETS[$i]}  ssh_port=${WC_SSH_PORTS[$i]}  ip=${WC_INDEX_TO_IP[$i]}  full_tunnel=${WC_FULL_TUNNEL[$i]}"
+  done
+  printf '\n' >&2
+  if any_full_tunnel_peer; then
+    log_info "Hub config will include NAT/forwarding PostUp (full-tunnel peer(s) present)."
+  else
+    log_info "Hub config without NAT PostUp (split-tunnel peers only)."
+  fi
+  printf '\n' >&2
+  log_info "Preflight (existing conf / interface up):"
+  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+    st="$(preflight_plan_hint "${WC_SSH_TARGETS[$i]}")"
+    log_detail "${WC_SSH_TARGETS[$i]}  conf_or_iface: ${st}"
+  done
+}
+
+wireconf_apply() {
+  wc_require_hub_endpoint_for_apply
+  log_info "Running plan prechecks (same order as plan)..."
+  wireconf_run_plan_prechecks
+  wc_build_ip_map
+  if ! wc_apply_prepare_prompts; then
+    return 0
+  fi
+  wc_apply_collect_removed_hosts
+  wc_apply_teardown_removed_hosts
+  preflight_all_hosts
+  local i jobs=0 max_j="${WC_PARALLEL:-1}"
+  [[ "$max_j" =~ ^[0-9]+$ ]] && [[ "$max_j" -ge 1 ]] || max_j=1
+  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+    wc_run_sudo "${WC_SSH_TARGETS[$i]}" "wg-quick down $(printf '%q' "$WC_IFACE") 2>/dev/null || true"
+  done
+  wg_build_all
+
+  if [[ "$max_j" -gt 1 ]]; then
+    log_info "Deploying configs (parallel=${max_j})..."
+    for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+      wc_scp_to "${WC_SSH_TARGETS[$i]}" "$(wg_conf_path_for_index "$i")" "/etc/wireguard/${WC_IFACE}.conf" &
+      jobs=$((jobs + 1))
+      if [[ "$jobs" -ge "$max_j" ]]; then
+        wait -n || die "Config upload failed"
+        jobs=$((jobs - 1))
+      fi
+    done
+    wait || die "Config upload failed"
+  else
+    for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+      wc_scp_to "${WC_SSH_TARGETS[$i]}" "$(wg_conf_path_for_index "$i")" "/etc/wireguard/${WC_IFACE}.conf"
+    done
+  fi
+
+  local autostart
+  autostart="$(normalize_bool "$WC_AUTO_START")"
+  jobs=0
+  if [[ "$max_j" -gt 1 ]]; then
+    for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+      (
+        idx="$i"
+        if [[ "$autostart" == "yes" ]]; then
+          wg_systemd_set_autostart "${WC_SSH_TARGETS[$idx]}" yes
+        else
+          wc_run_sudo "${WC_SSH_TARGETS[$idx]}" "wg-quick down $(printf '%q' "$WC_IFACE") 2>/dev/null || true"
+          if [[ "${WC_APPLY_BRING_UP[$idx]}" -eq 1 ]]; then
+            wc_run_sudo "${WC_SSH_TARGETS[$idx]}" "wg-quick up $(printf '%q' "/etc/wireguard/${WC_IFACE}.conf")"
+          else
+            log_info "Skipping wg-quick up on ${WC_SSH_TARGETS[$idx]} (${WC_IFACE} stays down)."
+          fi
+        fi
+      ) &
+      jobs=$((jobs + 1))
+      if [[ "$jobs" -ge "$max_j" ]]; then
+        wait -n || die "Bring-up failed"
+        jobs=$((jobs - 1))
+      fi
+    done
+    wait || die "Bring-up failed"
+  else
+    for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+      if [[ "$autostart" == "yes" ]]; then
+        wg_systemd_set_autostart "${WC_SSH_TARGETS[$i]}" yes
+      else
+        wc_run_sudo "${WC_SSH_TARGETS[$i]}" "wg-quick down $(printf '%q' "$WC_IFACE") 2>/dev/null || true"
+        if [[ "${WC_APPLY_BRING_UP[$i]}" -eq 1 ]]; then
+          wc_run_sudo "${WC_SSH_TARGETS[$i]}" "wg-quick up $(printf '%q' "/etc/wireguard/${WC_IFACE}.conf")"
+        else
+          log_info "Skipping wg-quick up on ${WC_SSH_TARGETS[$i]} (${WC_IFACE} stays down)."
+        fi
+      fi
+    done
+  fi
+
+  wg_cleanup_stage
+  trap - EXIT
+  wc_log_action apply "iface=${WC_IFACE} hosts=$(wc_log_hosts_csv)"
+  wc_log_cleanup_legacy
+  log_info "apply completed."
+}
+
+wireconf_verify() {
+  wc_build_ip_map
+  verify_all
+}
+
+wireconf_status() {
+  wc_build_ip_map
+  status_all
+}
+
+wireconf_show() {
+  wc_build_ip_map
+  plan_check_operator_wg_keygen || die "WireGuard tools / keygen check failed."
+  wg_build_all
+  local i n="${#WC_SSH_TARGETS[@]}"
+  if [[ "${WC_SHOW_REDACT:-0}" -eq 1 ]]; then
+    log_info "show: PrivateKey lines are redacted (--redact)."
+  else
+    log_warn "show: full configs go to stdout and include PrivateKey — avoid logs and untrusted pipes; use --redact to omit secrets."
+  fi
+  for ((i = 0; i < n; i++)); do
+    local label="hub"
+    [[ "$i" -gt 0 ]] && label="peer $i"
+    printf '### %s — %s (VPN %s) ###\n' "$label" "${WC_SSH_TARGETS[$i]}" "${WC_INDEX_TO_IP[$i]}"
+    if [[ "${WC_SHOW_REDACT:-0}" -eq 1 ]]; then
+      sed 's/^PrivateKey[[:space:]]*=.*/PrivateKey = <redacted>/' "$(wg_conf_path_for_index "$i")"
+    else
+      cat "$(wg_conf_path_for_index "$i")"
+    fi
+    printf '\n'
+  done
+  wg_cleanup_stage
+  trap - EXIT
+}
+
+wireconf_teardown() {
+  local i
+  log_info "Tearing down ${WC_IFACE} on all inventory hosts..."
+  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+    local t="${WC_SSH_TARGETS[$i]}"
+    log_info "Stopping ${WC_IFACE} on ${t}..."
+    wg_teardown_on_host "$t" "$WC_FORCE"
+    if [[ "$WC_FORCE" -eq 1 ]]; then
+      log_detail "${t}: removed /etc/wireguard/${WC_IFACE}.conf"
+    fi
+  done
+  wc_log_action teardown "iface=${WC_IFACE} hosts=$(wc_log_hosts_csv)"
+  if [[ "$WC_FORCE" -eq 0 ]]; then
+    log_info "teardown: services stopped and disabled. Config files left in place (use -f to remove)."
+  else
+    log_info "teardown: services stopped, disabled, and config files removed."
+  fi
+}
+
+# Copy examples into $PWD; never overwrite existing paths (-e = path exists).
+wireconf_init_fixup_env() {
+  local f="$1" tmp
+  [[ -f "$f" ]] || return 0
+  if grep -q '^INVENTORY=examples/inventory\.example$' "$f" 2>/dev/null; then
+    tmp="${f}.tmp.$$"
+    sed 's|^INVENTORY=examples/inventory\.example$|INVENTORY=inventory|' "$f" >"$tmp"
+    mv "$tmp" "$f"
+    log_info "Set INVENTORY=inventory in wireconf.env (local inventory file)"
+  fi
+}
+
+wireconf_cmd_init() {
+  local exdir="${WIRECONF_ROOT}/examples"
+  local created=0
+  [[ -d "$exdir" ]] || die "Examples directory not found: ${exdir} (wrong WIRECONF_ROOT?)"
+  log_info "init: target directory is ${PWD}"
+
+  if [[ -e "${PWD}/inventory" ]]; then
+    log_warn "Skip inventory — already exists: ${PWD}/inventory"
+  else
+    [[ -f "${exdir}/inventory.example" ]] || die "Missing ${exdir}/inventory.example"
+    cp -p "${exdir}/inventory.example" "${PWD}/inventory"
+    log_info "Created ${PWD}/inventory"
+    created=$((created + 1))
+  fi
+
+  if [[ -e "${PWD}/wireconf.env" ]]; then
+    log_warn "Skip wireconf.env — already exists: ${PWD}/wireconf.env"
+  else
+    [[ -f "${exdir}/wireconf.env.example" ]] || die "Missing ${exdir}/wireconf.env.example"
+    cp -p "${exdir}/wireconf.env.example" "${PWD}/wireconf.env"
+    wireconf_init_fixup_env "${PWD}/wireconf.env"
+    log_info "Created ${PWD}/wireconf.env"
+    created=$((created + 1))
+  fi
+
+  if [[ ! -e "${PWD}/.gitignore" ]]; then
+    printf '*.privatekey\nwireconf.env\ninventory\n*.wireconf.log\n' >"${PWD}/.gitignore"
+    log_info "Created ${PWD}/.gitignore (ignores private keys, wireconf.env, inventory, action log)"
+    created=$((created + 1))
+  fi
+
+  if [[ "$created" -eq 0 ]]; then
+    log_warn "init: no files written. Remove or rename existing files to copy examples."
+  else
+    log_info "init: done. Edit inventory and wireconf.env, then: ./wireconf plan"
+  fi
+}
+
+# Remove local working files: resolved INVENTORY (or ./inventory), ${basename}.wireconf.* next to it, ./wireconf.env.
+wireconf_cmd_clean() {
+  local inv invdir invbase envf p
+  local -a rm_paths=()
+
+  inv="${WC_INVENTORY:-}"
+  if [[ -z "$inv" ]]; then
+    inv="${PWD}/inventory"
+  elif [[ "$inv" != /* ]]; then
+    inv="${PWD}/${inv#./}"
+  fi
+  invdir="$(dirname -- "$inv")"
+  invbase="$(basename -- "$inv")"
+  envf="${PWD}/wireconf.env"
+
+  [[ -e "$inv" ]] && rm_paths+=("$inv")
+  shopt -s nullglob
+  for p in "${invdir}/${invbase}.wireconf."*; do
+    [[ -e "$p" ]] && rm_paths+=("$p")
+  done
+  shopt -u nullglob
+  [[ -e "$envf" ]] && rm_paths+=("$envf")
+
+  if [[ "${#rm_paths[@]}" -eq 0 ]]; then
+    log_info "clean: nothing to remove (no ${inv}, no ${invdir}/${invbase}.wireconf.*, no ${envf})."
+    return 0
+  fi
+  log_info "clean: will remove in ${PWD}:"
+  local p
+  for p in "${rm_paths[@]}"; do
+    log_detail "$p"
+  done
+  if [[ "${WC_ASSUME_YES:-0}" -ne 1 ]] && [[ ! -t 2 ]]; then
+    log_err "clean: need an interactive terminal (stderr) to confirm, or use -y / WIRECONF_YES=1"
+    exit 1
+  fi
+  if ! wireconf_prompt_yes "Remove these files?"; then
+    log_info "clean: cancelled."
+    return 0
+  fi
+  for p in "${rm_paths[@]}"; do
+    rm -f "$p"
+    log_info "Removed $p"
+  done
+  log_info "clean: done."
+}
+
+# Parse argv: optional global flags, then subcommand. Unknown flags error.
+parse_cli() {
+  WC_SUBCMD=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      -V | --version)
+        printf 'wireconf %s\n' "$WIRECONF_VERSION"
+        exit 0
+        ;;
+      -e | --env-file)
+        if [[ "$WC_ENV_FILE_EXPLICIT" -eq 1 ]]; then
+          log_warn "Multiple -e/--env-file flags; only the first was sourced (ignoring $2)"
+        fi
+        WC_ENV_FILE="$2"
+        shift 2
+        ;;
+      -I | --inventory)
+        WC_INVENTORY="$2"
+        shift 2
+        ;;
+      -n | --iface)
+        WC_IFACE="$2"
+        shift 2
+        ;;
+      -c | --network)
+        WC_NETWORK="$2"
+        shift 2
+        ;;
+      -H | --hub-endpoint)
+        WC_HUB_ENDPOINT="$2"
+        shift 2
+        ;;
+      -p | --port)
+        WC_PORT="$2"
+        shift 2
+        ;;
+      -S | --ssh-port)
+        validate_ssh_port "$2"
+        WC_SSH_PORT_DEFAULT="$2"
+        shift 2
+        ;;
+      --ssh-accept-new)
+        WC_SSH_ACCEPT_NEW=yes
+        shift
+        ;;
+      -a | --auto-start)
+        WC_AUTO_START="$2"
+        shift 2
+        ;;
+      -t | --full-tunnel-default)
+        WC_FULL_TUNNEL_DEFAULT="$2"
+        shift 2
+        ;;
+      -k | --keepalive)
+        WC_KEEPALIVE="$2"
+        shift 2
+        ;;
+      --parallel)
+        WC_PARALLEL="$2"
+        shift 2
+        ;;
+      -f | --force)
+        WC_FORCE=1
+        shift
+        ;;
+      -b | --backup-dir)
+        WC_BACKUP_DIR="$2"
+        shift 2
+        ;;
+      -y | --yes)
+        WC_ASSUME_YES=1
+        shift
+        ;;
+      --redact)
+        WC_SHOW_REDACT=1
+        shift
+        ;;
+      plan | apply | show | verify | test | status | teardown | init | clean)
+        WC_SUBCMD="$1"
+        [[ "$WC_SUBCMD" == "test" ]] && WC_SUBCMD="verify"
+        shift
+        break
+        ;;
+      add-peer | remove-peer)
+        WC_SUBCMD="$1"
+        shift
+        break
+        ;;
+      -*)
+        die "Unknown option: $1"
+        ;;
+      *)
+        die "Unexpected argument: $1 (put global flags before the subcommand)"
+        ;;
+    esac
+  done
+  if [[ -z "${WC_SUBCMD:-}" ]]; then
+    usage
+    exit 1
+  fi
+  case "${WC_SUBCMD}" in
+    add-peer | remove-peer)
+      # Global array (do not use declare -a here — it would be local to parse_cli)
+      WC_CMD_EXTRA_ARGS=("$@")
+      ;;
+    *)
+      if [[ $# -gt 0 ]]; then
+        die "Trailing arguments: $*"
+      fi
+      ;;
+  esac
+}
+
+main() {
+  wireconf_common_init
+  printf '\n' >&2
+  wireconf_print_banner
+  # Fast-path for help/version: skip env loading entirely
+  case "${1:-}" in
+    -h | --help) usage; exit 0 ;;
+    -V | --version) printf 'wireconf %s\n' "$WIRECONF_VERSION"; exit 0 ;;
+  esac
+  wireconf_bootstrap_env_from_argv "$@"
+  parse_cli "$@"
+  wc_apply_ssh_hostkey_opts
+  if [[ "${WC_SUBCMD}" == "init" ]]; then
+    wireconf_cmd_init
+    exit 0
+  fi
+  if [[ "${WC_SUBCMD}" == "clean" ]]; then
+    wireconf_cmd_clean
+    exit 0
+  fi
+  [[ -n "${WC_INVENTORY:-}" ]] || die "Set -I/--inventory or INVENTORY in env file (use -e/--env-file or place wireconf.env in current directory)"
+  if [[ "${WC_SUBCMD}" == "add-peer" ]]; then
+    inventory_peer_add "$WC_INVENTORY" "${WC_CMD_EXTRA_ARGS[@]}"
+    wc_log_action add-peer "host=${WC_CMD_EXTRA_ARGS[0]}"
+    exit 0
+  fi
+  if [[ "${WC_SUBCMD}" == "remove-peer" ]]; then
+    [[ ${#WC_CMD_EXTRA_ARGS[@]} -eq 1 ]] || die "remove-peer: need exactly one HOST argument"
+    inventory_peer_remove "$WC_INVENTORY" "${WC_CMD_EXTRA_ARGS[0]}"
+    wc_log_action remove-peer "host=${WC_CMD_EXTRA_ARGS[0]}"
+    exit 0
+  fi
+  parse_inventory "$WC_INVENTORY"
+  validate_cidr "$WC_NETWORK"
+  wc_validate_runtime_config
+
+  case "${WC_SUBCMD}" in
+    plan) wireconf_plan ;;
+    apply) wireconf_apply ;;
+    show) wireconf_show ;;
+    verify) wireconf_verify ;;
+    status) wireconf_status ;;
+    teardown) wireconf_teardown ;;
+    *) die "Unknown command: ${WC_SUBCMD}" ;;
+  esac
+}
+
+main "$@"

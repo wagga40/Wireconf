@@ -1,0 +1,12 @@
+# One host per line. First line is the WireGuard hub (may be localhost).
+# You may add or remove peer lines here by hand (same rules as add-peer/remove-peer); then run plan and apply.
+# Columns (whitespace-separated):
+#   1) host — user@host or host (ssh target); use localhost or 127.0.0.1 for local hub
+#   2) optional — if 1–65535: SSH port; else full_tunnel yes|y|no|n (default: FULL_TUNNEL_DEFAULT)
+#   3) optional — full_tunnel when column 2 is the SSH port
+#
+# Default SSH port for all lines comes from SSH_PORT in wireconf.env (default 22) or --ssh-port.
+
+# localhost no
+# ubuntu@peer1.example.com 2222 no
+# root@peer2.example.com yes

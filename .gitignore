@@ -1,0 +1,39 @@
+# Wireconf
+*.privatekey
+wireconf.env
+inventory
+*.wireconf.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Cursor — ignore local/cache; keep shared rules (exceptions)
+.cursor/*
+
+# Claude Code / Claude (local project state; add ! negations if you track specific paths)
+.claude/
+CLAUDE.md
+
+# Other AI / assistant tooling (local or cache)
+.aider*
+.aider.chat.history.md
+.copilot/
+.windsurf/
+.zed/
+*.code-workspace.local
