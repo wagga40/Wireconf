@@ -9,6 +9,20 @@ Like Tailscale, but powered solely by optimism, duct tape, and bash scripts.
 
 First host in an inventory becomes the hub; the rest become peers. Remote hosts are configured over SSH.
 
+```mermaid
+flowchart LR
+  Wireconf
+  Hub[Hub]
+  Peer1[Peer 1]
+  Peer2[Peer 2]
+  PeerN[Peer N...]
+  Wireconf -->|SSH| Hub
+  Hub <-->|WireGuard| Peer1
+  Hub <-->|WireGuard| Peer2
+  Hub <-->|WireGuard| PeerN
+
+```
+
 ## Quick start
 
 ```bash
