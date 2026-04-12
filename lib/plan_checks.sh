@@ -3,12 +3,19 @@
 # Plan (and apply) pre-checks: operator basics, SSH, Debian/Ubuntu OS, WireGuard, target tools.
 
 # True if /etc/os-release looks like Debian or Ubuntu (including ID_LIKE e.g. pop, mint).
+# Fetches the file content then matches locally to avoid multi-layer quoting over SSH.
+# Does NOT require sudo — /etc/os-release is world-readable.
 plan_target_is_debian_family() {
-  local target="$1"
-  wc_run_sudo "$target" 'test -r /etc/os-release && {
-      grep -qE "^ID=(debian|ubuntu)$" /etc/os-release ||
-      grep -qE "^ID_LIKE=.*(debian|ubuntu)" /etc/os-release
-    }' 2>/dev/null
+  local target="$1" out
+  if is_local_host "$target"; then
+    out="$(cat /etc/os-release 2>/dev/null)" || return 1
+  else
+    local port
+    port="$(wc_ssh_port_for_target "$target")"
+    out="$(wc_ssh_exec "$target" "$port" "cat /etc/os-release" 2>/dev/null)" || return 1
+  fi
+  grep -qE '^ID="?(debian|ubuntu)"?$' <<<"$out" ||
+    grep -qE '^ID_LIKE=.*"?(debian|ubuntu)' <<<"$out"
 }
 
 plan_target_missing_wg_tools() {

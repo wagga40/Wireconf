@@ -37,3 +37,4 @@ CLAUDE.md
 .windsurf/
 .zed/
 *.code-workspace.local
+inventory.wireconf.last-state
