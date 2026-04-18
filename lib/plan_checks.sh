@@ -92,7 +92,7 @@ plan_check_operator_wg_keygen() {
   local ht="${WC_SSH_TARGETS[0]}"
   local hp="${WC_SSH_PORTS[0]}"
 
-  if is_local_host "$ht"; then
+  if wc_is_local_execution_target "$ht"; then
     log_warn "No wg on operator and hub is localhost — need WireGuard tools on this machine."
     if ! plan_try_offer_install_wireguard "localhost"; then
       return 1
@@ -121,7 +121,7 @@ plan_check_ssh_connectivity() {
   for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
     t="${WC_SSH_TARGETS[$i]}"
     p="${WC_SSH_PORTS[$i]}"
-    if is_local_host "$t"; then
+    if wc_is_local_execution_target "$t"; then
       log_detail "${t}  (local, no ssh)"
       continue
     fi

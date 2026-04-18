@@ -167,6 +167,85 @@ is_local_host() {
   esac
 }
 
+wc_host_resolved_ips() {
+  local host="$1"
+  host="${host#[}"
+  host="${host%]}"
+  [[ -n "$host" ]] || return 1
+
+  # Fast-path literal IPs so callers don't need DNS tools.
+  if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$host" == *:* ]]; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+
+  if command -v getent >/dev/null 2>&1; then
+    getent ahosts "$host" 2>/dev/null | awk '{print $1}' | sort -u
+    return 0
+  fi
+  if command -v dscacheutil >/dev/null 2>&1; then
+    dscacheutil -q host -a name "$host" 2>/dev/null | awk '/ip_address:/{print $2}' | sort -u
+    return 0
+  fi
+  if command -v host >/dev/null 2>&1; then
+    host "$host" 2>/dev/null | awk '/ has address /{print $4} / has IPv6 address /{print $5}' | sort -u
+    return 0
+  fi
+  if command -v dig >/dev/null 2>&1; then
+    dig +short "$host" 2>/dev/null | awk 'NF>0{print $1}' | sort -u
+    return 0
+  fi
+
+  return 1
+}
+
+wc_local_ips() {
+  printf '%s\n' "127.0.0.1" "::1"
+
+  if command -v hostname >/dev/null 2>&1; then
+    hostname -I 2>/dev/null | tr ' ' '\n' | awk 'NF>0{print $1}'
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    ip -o addr show up 2>/dev/null | awk '{print $4}' | awk -F/ '{print $1}'
+  elif command -v ifconfig >/dev/null 2>&1; then
+    ifconfig 2>/dev/null | awk '
+      $1 == "inet" {print $2}
+      $1 == "inet6" {gsub(/%.*$/, "", $2); print $2}
+    '
+  fi
+}
+
+# True for literal localhost, or for the configured hub target when that host
+# resolves to one of this machine's addresses (public IP/FQDN that points back).
+wc_is_local_execution_target() {
+  local target="$1"
+  is_local_host "$target" && return 0
+
+  local hub="${WC_HUB_SSH_TARGET:-${WC_SSH_TARGETS[0]:-}}"
+  [[ -n "$hub" ]] || return 1
+  [[ "$target" == "$hub" ]] || return 1
+
+  local host
+  host="$(wc_wireguard_endpoint_host "$target")"
+  is_local_host "$host" && return 0
+
+  local resolved local_ips ip
+  resolved="$(wc_host_resolved_ips "$host" 2>/dev/null || true)"
+  [[ -n "$resolved" ]] || return 1
+  local_ips="$(wc_local_ips 2>/dev/null | sort -u || true)"
+  [[ -n "$local_ips" ]] || return 1
+
+  while IFS= read -r ip; do
+    local lip
+    [[ -n "$ip" ]] || continue
+    while IFS= read -r lip; do
+      [[ -n "$lip" ]] || continue
+      [[ "$ip" == "$lip" ]] && return 0
+    done <<<"$local_ips"
+  done <<<"$resolved"
+  return 1
+}
+
 wc_wireguard_endpoint_host() {
   local target="$1"
   printf '%s\n' "${target##*@}"
@@ -178,7 +257,7 @@ __wc_run_sudo_impl() {
   local quiet="$2"
   shift 2
   local r=0 port
-  if is_local_host "$target"; then
+  if wc_is_local_execution_target "$target"; then
     bash -c "set -euo pipefail; sudo -n bash -c $(printf '%q' "$*")" || r=$?
   else
     port="$(wc_ssh_port_for_target "$target")"
@@ -188,7 +267,7 @@ __wc_run_sudo_impl() {
   fi
   if [[ "$r" -ne 0 && "$quiet" -eq 0 ]]; then
     log_err "Remote/local command failed on ${target} (exit ${r})."
-    if is_local_host "$target"; then
+    if wc_is_local_execution_target "$target"; then
       log_err "If sudo was denied, configure passwordless sudo for the needed commands and verify: sudo -n true"
     else
       log_err "If sudo was denied, configure passwordless sudo for the needed commands and verify: ssh -p ${port} ${target} 'sudo -n true'"
@@ -214,7 +293,7 @@ wc_scp_to() {
   local target="$1"
   local src="$2"
   local dst="$3"
-  if is_local_host "$target"; then
+  if wc_is_local_execution_target "$target"; then
     wc_run_sudo "$target" "install -m 0600 -T $(printf '%q' "$src") $(printf '%q' "$dst")"
   else
     local port remote_tmp qtmp qdst
@@ -481,6 +560,10 @@ wc_ssh_exec() {
   local target="$1"
   local port="$2"
   shift 2
+  if wc_is_local_execution_target "$target"; then
+    bash -lc "$*"
+    return $?
+  fi
   # shellcheck disable=SC2086
   ssh ${WC_SSH_OPTS:-} ${WC_SSH_HOSTKEY_OPTS:-} -p "$port" -o BatchMode=yes -o ConnectTimeout=10 "$target" "$@"
 }
@@ -563,7 +646,7 @@ wc_warn_if_network_collides() {
   probe_cmd='command -v ip >/dev/null 2>&1 && ip -4 route show 2>/dev/null || true'
 
   local out=""
-  if is_local_host "$WC_HUB_SSH_TARGET"; then
+  if wc_is_local_execution_target "$WC_HUB_SSH_TARGET"; then
     out="$(bash -c "$probe_cmd" 2>/dev/null || true)"
   else
     local port

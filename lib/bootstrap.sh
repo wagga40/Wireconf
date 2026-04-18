@@ -26,7 +26,7 @@ wc_ssh_user_for_target() {
 wc_ssh_exec_tty() {
   local target="$1" port="$2"
   shift 2
-  if is_local_host "$target"; then
+  if wc_is_local_execution_target "$target"; then
     bash -c "$*"
     return $?
   fi
@@ -37,7 +37,7 @@ wc_ssh_exec_tty() {
 # Step 1: run ssh-copy-id if key auth is not already working. Returns 0 on success.
 bootstrap_step_ssh_copy_id() {
   local target="$1" port="$2"
-  if is_local_host "$target"; then
+  if wc_is_local_execution_target "$target"; then
     log_detail_ok "ssh-copy-id: localhost — no-op"
     return 0
   fi

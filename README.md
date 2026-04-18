@@ -140,7 +140,7 @@ For single-file installs (the `curl \| bash` path), run:
 
 ```bash
 wireconf update                                # fetch latest, verify sha256, replace binary
-WIRECONF_VERSION=v0.3.0 wireconf update        # pin a specific tag
+WIRECONF_VERSION=v0.3.1 wireconf update        # pin a specific tag
 WIRECONF_REPO=owner/fork wireconf update       # pull from a fork
 WIRECONF_VERIFY=0 wireconf update              # skip checksum (discouraged)
 ```

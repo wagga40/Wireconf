@@ -203,6 +203,28 @@ test_bootstrap_user_for_target() {
   assert_eq "operator" "$got" "user falls back to \$USER when target has no user@"
 }
 
+test_hub_resolving_to_local_runs_as_local() {
+  reset_wireconf_globals
+  assert_ok "hub should be local when its DNS resolves to this machine" \
+    bash -c 'WIRECONF_SOURCE_ONLY=1 source "'"$ROOT"'/wireconf"; \
+      WC_SSH_TARGETS=("root@hub.example.com" "peer.example.com"); \
+      WC_HUB_SSH_TARGET="${WC_SSH_TARGETS[0]}"; \
+      wc_host_resolved_ips() { printf "%s\n" "203.0.113.10"; }; \
+      wc_local_ips() { printf "%s\n" "127.0.0.1" "203.0.113.10"; }; \
+      wc_is_local_execution_target "root@hub.example.com"'
+}
+
+test_peer_resolving_to_local_stays_remote() {
+  reset_wireconf_globals
+  assert_not_ok "only hub gets resolve-to-local special case" \
+    bash -c 'WIRECONF_SOURCE_ONLY=1 source "'"$ROOT"'/wireconf"; \
+      WC_SSH_TARGETS=("root@hub.example.com" "peer.example.com"); \
+      WC_HUB_SSH_TARGET="${WC_SSH_TARGETS[0]}"; \
+      wc_host_resolved_ips() { printf "%s\n" "203.0.113.10"; }; \
+      wc_local_ips() { printf "%s\n" "127.0.0.1" "203.0.113.10"; }; \
+      wc_is_local_execution_target "peer.example.com"'
+}
+
 run_test test_endpoint_defaults_strip_ssh_user
 run_test test_ip_allocator_rejects_broadcast_capacity
 run_test test_removed_host_uses_saved_ssh_port_hint
@@ -216,6 +238,8 @@ run_test test_hub_endpoint_obviously_reachable
 run_test test_doctor_check_dns_short_circuits
 run_test test_doctor_mark_fail_bumps_counters
 run_test test_bootstrap_user_for_target
+run_test test_hub_resolving_to_local_runs_as_local
+run_test test_peer_resolving_to_local_stays_remote
 
 printf 'Passed %d tests; failed %d tests\n' "$pass_count" "$fail_count"
 [[ "$fail_count" -eq 0 ]]
