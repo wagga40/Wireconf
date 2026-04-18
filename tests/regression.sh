@@ -151,6 +151,18 @@ test_verify_pings_before_handshake_checks() {
     "verify should ping from hub before strict handshake checks"
 }
 
+test_verify_ping_peer_uses_quiet_sudo() {
+  reset_wireconf_globals
+  assert_ok "verify ping should use quiet sudo wrapper" \
+    bash -c 'WIRECONF_SOURCE_ONLY=1 source "'"$ROOT"'/wireconf"; \
+      quiet_calls=0; noisy_calls=0; \
+      wc_run_sudo_quiet() { quiet_calls=$((quiet_calls + 1)); return 0; }; \
+      wc_run_sudo() { noisy_calls=$((noisy_calls + 1)); return 0; }; \
+      log_info() { :; }; \
+      verify_ping_peer "hub.example.com" "10.200.0.2" >/dev/null 2>&1; \
+      [[ "$quiet_calls" -eq 1 ]] && [[ "$noisy_calls" -eq 0 ]]'
+}
+
 test_inline_hosts_basic() {
   reset_wireconf_globals
   wc_load_inline_hosts "root@hub" "root@peer1" "peer2"
@@ -259,6 +271,7 @@ run_test test_ip_allocator_rejects_broadcast_capacity
 run_test test_removed_host_uses_saved_ssh_port_hint
 run_test test_verify_reads_remote_epoch
 run_test test_verify_pings_before_handshake_checks
+run_test test_verify_ping_peer_uses_quiet_sudo
 run_test test_inline_hosts_basic
 run_test test_inline_hosts_port_and_tunnel
 run_test test_inline_hosts_rejects_leading_dash
