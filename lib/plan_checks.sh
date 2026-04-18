@@ -26,7 +26,7 @@ plan_target_missing_wg_tools() {
 
 plan_install_wireguard_apt() {
   local target="$1"
-  log_info "Running apt on ${target} to install wireguard..."
+  log_info "Installing wireguard (meta-package) on ${target} via apt-get..."
   wc_run_sudo "$target" "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y wireguard"
 }
 
@@ -36,9 +36,10 @@ plan_try_offer_install_wireguard() {
   if wc_run_sudo_quiet "$target" "command -v wg >/dev/null && command -v wg-quick >/dev/null" 2>/dev/null; then
     return 0
   fi
-  if ! wireconf_prompt_yes "Install package wireguard (apt) on ${target}?"; then
-    log_err "WireGuard not installed on ${target}."
+  if ! wireconf_prompt_yes "wg / wg-quick missing on ${target}. Install the 'wireguard' apt meta-package now?"; then
+    log_err "wireguard not installed on ${target}."
     log_detail "Install manually: sudo apt-get update && sudo apt-get install -y wireguard"
+    log_detail "Or run: wireconf bootstrap ${target}  # (ssh-copy-id + sudoers drop-in + apt install)"
     log_detail "Non-interactive: use -y / --yes or WIRECONF_YES=1 to install without prompting."
     return 1
   fi
@@ -47,7 +48,7 @@ plan_try_offer_install_wireguard() {
     log_err "wg / wg-quick still missing on ${target} after apt install."
     return 1
   fi
-  log_info "WireGuard tools are available on ${target}."
+  log_info "WireGuard tools are now installed on ${target}."
   return 0
 }
 

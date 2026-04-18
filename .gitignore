@@ -4,6 +4,9 @@ wireconf.env
 inventory
 *.wireconf.log
 
+# Build artifacts
+/dist/
+
 # macOS
 .DS_Store
 .AppleDouble

@@ -23,11 +23,32 @@ flowchart LR
 
 ```
 
+## Install
+
+Pick one:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wagga40/Wireconf/main/scripts/install.sh | bash
+```
+
+Downloads the latest single-file release, verifies its SHA-256, and installs it to `/usr/local/bin/wireconf` (override with `WIRECONF_PREFIX=$HOME/.local bash`).
+
+```bash
+git clone https://github.com/wagga40/Wireconf.git && cd Wireconf
+task install PREFIX=/usr/local   # copies lib/ and examples/ next to the binary
+```
+
+Dev installs use [go-task](https://taskfile.dev) — install once with `brew install go-task` (macOS) or `sudo snap install task --classic` / the upstream installer on Linux. Run `task --list` to see every target.
+
+```bash
+git clone https://github.com/wagga40/Wireconf.git && cd Wireconf
+./wireconf -V                    # run straight from the checkout
+```
+
 ## Quick start
 
 ```bash
-chmod +x wireconf
-./wireconf init                # 1. Scaffold inventory + wireconf.env in the current directory
+wireconf init                  # 1. Scaffold inventory + wireconf.env in the current directory
 ```
 
 Edit the `inventory` file — place the hub on line 1, and list peers below:
@@ -47,12 +68,51 @@ WG_HUB_ENDPOINT=203.0.113.10
 Then deploy:
 
 ```bash
-./wireconf plan                # 2. Check SSH, OS, tools, and show IP layout
-./wireconf apply               # 3. Generate keys, upload configs, bring up tunnels
-./wireconf verify              #    Confirm handshakes and hub→peer pings
+wireconf plan                  # 2. Check SSH, OS, tools, and show IP layout
+wireconf apply                 # 3. Generate keys, upload configs, bring up tunnels
+wireconf verify                #    Confirm handshakes and hub→peer pings
 ```
 
-The `wireconf.env` file in the current directory is loaded automatically. To use a different file, run: `./wireconf -e /path/to/wireconf.env plan`. Use `-y` to skip all interactive prompts (for CI/scripts).
+For a one-shot run use `wireconf up`, which chains `plan + apply + verify` and accepts hosts inline (no inventory file needed):
+
+```bash
+wireconf up                                    # uses ./inventory if present
+wireconf up root@hub.example.com root@peer1    # no inventory file; stateless run
+```
+
+The `wireconf.env` file in the current directory is loaded automatically. To use a different file, run: `wireconf -e /path/to/wireconf.env plan`. Use `-y` to skip all interactive prompts (for CI/scripts).
+
+Replace `wireconf` with `./wireconf` in every example if you are running from a checkout rather than an installed binary.
+
+## Preparing hosts
+
+On brand-new servers you usually need three things before `apply` can work: key-based SSH, passwordless `sudo`, and WireGuard userspace tools. Wireconf has two commands for this:
+
+```bash
+wireconf doctor                # auto-detects ./inventory (or pass inline hosts)
+wireconf doctor root@hub.example.com root@peer1     # one-off diagnostic
+```
+
+`doctor` runs every preflight check non-fatally and prints an exact fix command for each failure (DNS, TCP, SSH host key, key auth, passwordless sudo, Debian/Ubuntu OS, required tools, and the kernel WireGuard module).
+
+```bash
+wireconf bootstrap                                  # uses ./inventory if present
+wireconf bootstrap root@hub.example.com root@peer1  # inline hosts
+```
+
+`bootstrap` is idempotent and performs three steps per host, skipping each one when it is already satisfied:
+
+1. `ssh-copy-id` (prompts once on `/dev/tty` for the target password if needed).
+2. `/etc/sudoers.d/wireconf-<user>` NOPASSWD drop-in, validated with `visudo -cf`. Skipped when the SSH user is `root` or `sudo -n` already works.
+3. `apt-get install -y wireguard` (Debian-family). Skipped when `wg`/`wg-quick` are already installed.
+
+Typical first-time flow:
+
+```bash
+wireconf bootstrap root@hub.example.com root@peer1 root@peer2
+wireconf doctor root@hub.example.com root@peer1 root@peer2
+wireconf up root@hub.example.com root@peer1 root@peer2
+```
 
 ## Commands
 
@@ -61,7 +121,10 @@ Listed in typical lifecycle order. Run `./wireconf -h` for the full flag list.
 | Command | What it does |
 |---------|-------------|
 | `init` | Copy example files into the current directory (never overwrites existing files). |
+| `bootstrap [HOST...]` | Idempotent `ssh-copy-id` + `/etc/sudoers.d/` NOPASSWD drop-in + `apt install wireguard`. Sequential (may prompt for passwords). |
+| `doctor [HOST...]` | Non-fatal preflight report (DNS, TCP, SSH, sudo, OS, tools, wg module) with exact fix commands per host. |
 | `plan` | Validate SSH, OS, tools on every host; show VPN IP layout and preflight status. |
+| `up [HOST...]` | One-shot: `plan` + `apply` + `verify`. Inline `HOST` args skip the inventory file (stateless). |
 | `show` | Generate configs and print to stdout without deploying. Add `--redact` to hide private keys. |
 | `apply` | Run all `plan` checks, then deploy configs and bring up tunnels. Prompts on a TTY; `-y` skips. |
 | `verify` / `test` | Check handshakes, hub→peer pings, print ASCII topology. Exits on first failure. |

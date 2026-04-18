@@ -122,6 +122,7 @@ wireconf_prompt_yes() {
 WC_ENV_FILE=""
 WC_ENV_FILE_EXPLICIT=0
 WC_INVENTORY=""
+WC_INVENTORY_EXPLICIT=0
 WC_IFACE="${WG_INTERFACE:-wg0}"
 WC_NETWORK="${WG_NETWORK:-10.200.0.0/24}"
 WC_PORT="${WG_PORT:-51820}"
@@ -149,12 +150,15 @@ WC_ASSUME_YES=0
 # 1 = show command omits PrivateKey lines (--redact)
 WC_SHOW_REDACT=0
 
-# Populated by parse_inventory
+# Populated by parse_inventory (or wc_load_inline_hosts)
 declare -a WC_SSH_TARGETS=()
 declare -a WC_SSH_PORTS=()
 declare -a WC_FULL_TUNNEL=()
 declare -A WC_SSH_PORT_HINTS=()
 WC_HUB_SSH_TARGET=""
+
+# Trailing non-flag arguments to subcommands (up, add-peer, remove-peer, bootstrap, doctor).
+declare -a WC_CMD_EXTRA_ARGS=()
 
 is_local_host() {
   case "$1" in
@@ -352,6 +356,41 @@ wc_apply_ssh_hostkey_opts() {
   fi
 }
 
+# Build WC_SSH_TARGETS / WC_SSH_PORTS / WC_FULL_TUNNEL / WC_HUB_SSH_TARGET from a
+# list of CLI-provided hosts using the same grammar as `parse_inventory_line`
+# (host [ssh_port] [full_tunnel]). First arg is the hub. No file is read or
+# written; callers are expected to set WC_INVENTORY="" afterwards so persistent
+# state (action log, last-state) is skipped.
+wc_load_inline_hosts() {
+  local n=$#
+  [[ "$n" -ge 2 ]] || die "inline hosts: need at least 2 (hub + peer), got $n"
+
+  validate_ssh_port "$WC_SSH_PORT_DEFAULT"
+
+  WC_SSH_TARGETS=()
+  WC_SSH_PORTS=()
+  WC_FULL_TUNNEL=()
+  local -A _seen_hosts=()
+  local def spec host port ft
+  def="$(normalize_bool "$WC_FULL_TUNNEL_DEFAULT")"
+
+  for spec in "$@"; do
+    case "$spec" in
+      -*) die "inline hosts: '$spec' looks like a flag — global flags must come before the subcommand (e.g. wireconf -y up root@hub root@peer)" ;;
+    esac
+    parse_inventory_line "$spec" "$WC_SSH_PORT_DEFAULT" "$def" host port ft || die "inline hosts: empty spec"
+    if [[ -n "${_seen_hosts[$host]+x}" ]]; then
+      die "inline hosts: duplicate host $host"
+    fi
+    _seen_hosts["$host"]=1
+    WC_SSH_TARGETS+=("$host")
+    WC_SSH_PORTS+=("$port")
+    WC_FULL_TUNNEL+=("$ft")
+  done
+
+  WC_HUB_SSH_TARGET="${WC_SSH_TARGETS[0]}"
+}
+
 # Parse inventory: sets WC_SSH_TARGETS, WC_SSH_PORTS, WC_FULL_TUNNEL, WC_HUB_SSH_TARGET
 parse_inventory() {
   local inv="$1"
@@ -511,6 +550,49 @@ validate_cidr() {
   done
 }
 
+# Non-fatal heuristic: warn if WC_NETWORK overlaps with an existing non-WireGuard
+# route on the HUB host. Uses `ip -4 route show` via wc_ssh_exec when the hub is
+# remote, or a local shell when it is localhost. Silently skipped if `ip` is
+# unavailable or anything errors out — this is advisory only.
+wc_warn_if_network_collides() {
+  local net="$WC_NETWORK"
+  [[ -n "$net" ]] || return 0
+  [[ -n "${WC_HUB_SSH_TARGET:-}" ]] || return 0
+
+  local probe_cmd
+  probe_cmd='command -v ip >/dev/null 2>&1 && ip -4 route show 2>/dev/null || true'
+
+  local out=""
+  if is_local_host "$WC_HUB_SSH_TARGET"; then
+    out="$(bash -c "$probe_cmd" 2>/dev/null || true)"
+  else
+    local port
+    port="$(wc_ssh_port_for_target "$WC_HUB_SSH_TARGET")"
+    # shellcheck disable=SC2086
+    out="$(ssh ${WC_SSH_OPTS:-} ${WC_SSH_HOSTKEY_OPTS:-} -p "$port" \
+      -o BatchMode=yes -o ConnectTimeout=8 "$WC_HUB_SSH_TARGET" \
+      "bash -lc $(printf '%q' "$probe_cmd")" 2>/dev/null || true)"
+  fi
+  [[ -n "$out" ]] || return 0
+
+  local line dest dev suggest
+  while IFS= read -r line; do
+    [[ "$line" =~ ^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+) ]] || continue
+    dest="${BASH_REMATCH[1]}"
+    [[ "$dest" == "$net" ]] || continue
+    dev="${line##*dev }"
+    dev="${dev%% *}"
+    case "$dev" in
+      "$WC_IFACE" | wg* | utun* ) continue ;;  # ours or a tunnel iface
+    esac
+    suggest="${net%.*}"
+    suggest="${suggest%.*}.$(( ${net##*.} / 256 * 256 + 1 )).0/24"
+    log_warn "WG_NETWORK ${net} overlaps an existing route on ${WC_HUB_SSH_TARGET} (dev ${dev:-unknown}); pick a different range with --network (e.g. 10.201.0.0/24) or set WG_NETWORK."
+    return 0
+  done <<<"$out"
+  return 0
+}
+
 # Peer count (excluding hub)
 wc_peer_count() {
   echo $((${#WC_SSH_TARGETS[@]} - 1))
@@ -533,13 +615,35 @@ wc_any_remote_peer() {
   return 1
 }
 
+# A hub host is "obviously reachable" as a WireGuard Endpoint= when it is an
+# IP address (v4/v6) or looks like an FQDN (contains a dot). Single-label names
+# like `hub` or `gateway` usually only resolve inside the operator's /etc/hosts
+# or LAN DNS — worth warning about.
+wc_hub_endpoint_is_obviously_reachable() {
+  local host="$1"
+  host="${host##*@}"
+  host="${host%%:*}"
+  [[ -n "$host" ]] || return 1
+  case "$host" in
+    *:*) return 0 ;;  # IPv6 literal
+  esac
+  if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    return 0
+  fi
+  [[ "$host" == *.* ]]
+}
+
 # When WG_HUB_ENDPOINT / -H is unset and a remote peer exists, set WC_HUB_ENDPOINT
-# to the inventory hub host (first line). Returns 0 if this default was applied, else 1.
+# to the inventory hub host (first line). Returns 0 if this default was applied
+# AND the inferred endpoint is not obviously reachable (i.e., callers should warn).
+# Returns 1 if the endpoint was already set OR the inferred value is obviously
+# usable OR there are no remote peers.
 wc_resolve_hub_endpoint_from_inventory() {
   [[ -n "$WC_HUB_ENDPOINT" ]] && return 1
   wc_any_remote_peer || return 1
   [[ -n "${WC_HUB_SSH_TARGET:-}" ]] || die "Inventory hub (first line) missing for default WireGuard endpoint"
   WC_HUB_ENDPOINT="$(wc_wireguard_endpoint_host "$WC_HUB_SSH_TARGET")"
+  wc_hub_endpoint_is_obviously_reachable "$WC_HUB_ENDPOINT" && return 1
   return 0
 }
 

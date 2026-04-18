@@ -1,0 +1,117 @@
+# wireconf — build, install, test.
+# https://taskfile.dev
+#
+# Usage:
+#   task                    # default: build
+#   task --list             # show all tasks
+#   task build              # produce dist/wireconf (single-file) + dist/wireconf.sha256
+#   task install            # source-tree install (requires lib/, examples/ alongside binary)
+#   task uninstall          # remove source-tree install
+#   task dist-install       # single-file install from dist/wireconf (runs `build` first)
+#   task dist-uninstall     # remove single-file install
+#   task lint               # shellcheck wireconf, lib/*.sh, scripts/*.sh, tests/*.sh
+#   task lint-strict        # full shellcheck run (warnings included)
+#   task test               # run tests/regression.sh (against source tree)
+#   task test-dist          # run tests/regression.sh against dist/wireconf
+#   task clean              # remove dist/
+#
+# Variables (override on the CLI, e.g. `task install PREFIX=/opt/local`):
+#   PREFIX   install prefix (default /usr/local)
+#   DESTDIR  staging root prepended to every install path (for packagers)
+
+version: '3'
+
+vars:
+  PREFIX: '{{.PREFIX | default "/usr/local"}}'
+  DESTDIR: '{{.DESTDIR | default ""}}'
+  BINDIR: '{{.DESTDIR}}{{.PREFIX}}/bin'
+  LIBEXECDIR: '{{.DESTDIR}}{{.PREFIX}}/libexec/wireconf'
+  DIST_DIR: dist
+  DIST_BIN: dist/wireconf
+  DIST_SHA: dist/wireconf.sha256
+
+tasks:
+  default:
+    desc: Alias for `task build`
+    deps: [build]
+
+  build:
+    desc: Produce dist/wireconf (single-file) + dist/wireconf.sha256
+    sources:
+      - wireconf
+      - lib/*.sh
+      - scripts/build-single-file.sh
+      - examples/inventory.example
+      - examples/wireconf.env.example
+    generates:
+      - '{{.DIST_BIN}}'
+      - '{{.DIST_SHA}}'
+    cmds:
+      - bash scripts/build-single-file.sh {{.DIST_DIR}}
+
+  install:
+    desc: Source-tree install (copies lib/ and examples/ next to the binary)
+    cmds:
+      - install -d {{.BINDIR}} {{.LIBEXECDIR}} {{.LIBEXECDIR}}/lib {{.LIBEXECDIR}}/examples
+      - install -m 0755 wireconf {{.LIBEXECDIR}}/wireconf
+      - install -m 0644 lib/*.sh {{.LIBEXECDIR}}/lib/
+      - install -m 0644 examples/inventory.example {{.LIBEXECDIR}}/examples/
+      - install -m 0644 examples/wireconf.env.example {{.LIBEXECDIR}}/examples/
+      - ln -sf {{.PREFIX}}/libexec/wireconf/wireconf {{.BINDIR}}/wireconf
+      - echo "wireconf installed to {{.BINDIR}}/wireconf -> {{.LIBEXECDIR}}/wireconf"
+
+  uninstall:
+    desc: Remove the source-tree install
+    cmds:
+      - rm -f {{.BINDIR}}/wireconf
+      - rm -rf {{.LIBEXECDIR}}
+      - echo "wireconf source-tree install removed."
+
+  dist-install:
+    desc: Single-file install from dist/wireconf (runs `build` first)
+    deps: [build]
+    cmds:
+      - install -d {{.BINDIR}}
+      - install -m 0755 {{.DIST_BIN}} {{.BINDIR}}/wireconf
+      - echo "wireconf (single-file) installed to {{.BINDIR}}/wireconf"
+
+  dist-uninstall:
+    desc: Remove the single-file install
+    cmds:
+      - rm -f {{.BINDIR}}/wireconf
+      - echo "wireconf single-file install removed."
+
+  lint:
+    desc: shellcheck -x --severity=error on wireconf, lib, scripts, tests
+    cmds:
+      - sh -c 'command -v shellcheck >/dev/null || { echo "shellcheck not found on PATH" >&2; exit 1; }'
+      - shellcheck -x --severity=error wireconf lib/*.sh scripts/*.sh tests/*.sh
+
+  lint-strict:
+    desc: Full shellcheck (warnings included; pre-existing SC2034 may fail)
+    cmds:
+      - sh -c 'command -v shellcheck >/dev/null || { echo "shellcheck not found on PATH" >&2; exit 1; }'
+      - shellcheck -x wireconf lib/*.sh scripts/*.sh tests/*.sh
+
+  test:
+    desc: Run tests/regression.sh against the source tree
+    cmds:
+      - bash tests/regression.sh
+
+  test-dist:
+    desc: Run tests/regression.sh against dist/wireconf (isolated tempdir)
+    deps: [build]
+    cmds:
+      - |
+        set -eu
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' EXIT
+        mkdir -p "$tmpdir/tests"
+        cp {{.DIST_BIN}} "$tmpdir/wireconf"
+        cp tests/regression.sh "$tmpdir/tests/"
+        cd "$tmpdir" && bash tests/regression.sh
+
+  clean:
+    desc: Remove dist/
+    cmds:
+      - rm -rf {{.DIST_DIR}}

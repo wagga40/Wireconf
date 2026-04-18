@@ -4,12 +4,19 @@
 
 WC_LOG_FILE=""
 
+# Persistent state files (action log, last-state) live next to WC_INVENTORY.
+# In inline-host mode (no inventory file), logging is a no-op — runs are stateless.
+_wc_log_enabled() {
+  [[ -n "${WC_INVENTORY:-}" ]]
+}
+
 wc_log_state_file() {
   printf '%s\n' "${WC_INVENTORY}.wireconf.last-state"
 }
 
 # Append one line: YYYY-MM-DDTHH:MM:SS ACTION key=value ...
 wc_log_action() {
+  _wc_log_enabled || return 0
   [[ -n "${WC_LOG_FILE:-}" ]] || WC_LOG_FILE="${WC_INVENTORY}.wireconf.log"
   local ts action
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -29,6 +36,7 @@ wc_log_hosts_csv() {
 wc_log_read_last_apply() {
   WC_APPLY_PREV_TARGETS=()
   WC_SSH_PORT_HINTS=()
+  _wc_log_enabled || return 0
   [[ -n "${WC_LOG_FILE:-}" ]] || WC_LOG_FILE="${WC_INVENTORY}.wireconf.log"
   wc_log_read_last_apply_state
 
@@ -57,6 +65,7 @@ wc_log_read_last_apply() {
 }
 
 wc_log_read_last_apply_state() {
+  _wc_log_enabled || return 0
   local state_file line host port
   state_file="$(wc_log_state_file)"
   [[ -f "$state_file" ]] || return 0
@@ -69,6 +78,7 @@ wc_log_read_last_apply_state() {
 }
 
 wc_log_write_last_apply_state() {
+  _wc_log_enabled || return 0
   local state_file tmp i
   state_file="$(wc_log_state_file)"
   tmp="${state_file}.tmp.$$"
@@ -81,6 +91,7 @@ wc_log_write_last_apply_state() {
 
 # Remove legacy snapshot after a successful log write (one-time migration).
 wc_log_cleanup_legacy() {
+  _wc_log_enabled || return 0
   local legacy="${WC_INVENTORY}.wireconf.last-targets"
   [[ -f "$legacy" ]] && rm -f -- "$legacy"
   return 0
