@@ -33,7 +33,7 @@ Pick one:
 curl -fsSL https://raw.githubusercontent.com/wagga40/Wireconf/main/scripts/install.sh | bash
 ```
 
-Downloads the latest single-file release, verifies its SHA-256, and installs it to `/opt/wireguard/bin/wireconf` (override with `WIRECONF_PREFIX=$HOME/.local bash`). Add `/opt/wireguard/bin` to your `PATH` if it is not already there. Keep wireconf up to date later with `wireconf update`.
+Downloads the latest single-file release, verifies its SHA-256, and installs it to `/opt/wireconf/wireconf` (override with `WIRECONF_PREFIX=$HOME/.local bash`). Add `/opt/wireconf` to your `PATH` if it is not already there. Keep wireconf up to date later with `wireconf update`.
 
 ### Git
 
@@ -215,7 +215,7 @@ Core settings live in `wireconf.env` (auto-loaded) or as CLI flags. See `./wirec
 
 ## Security notes
 
-- Treat `wireconf.env` and `inventory` like credentials — the env file is `source`d by bash. Keep both out of version control (see `init`'s `.gitignore`).
+- Treat `wireconf.env` and `inventory` like credentials — the env file is `source`d by bash. Keep both out of version control with your own `.gitignore` rules.
 - Hub `PostUp`/`PostDown` run under a shell on the server; interface-name validation prevents command injection.
 - `SSH_OPTS` is word-split into `ssh`/`scp` arguments; avoid putting secrets there.
 

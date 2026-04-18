@@ -9,7 +9,7 @@
 # Environment variables (all optional):
 #   WIRECONF_REPO      owner/name       GitHub repo           (default: derived from script URL if piped; falls back to the value embedded below)
 #   WIRECONF_VERSION   tag (e.g. v0.3.0) or "latest"          (default: latest)
-#   WIRECONF_PREFIX    install prefix                          (default: /opt/wireguard)
+#   WIRECONF_PREFIX    install prefix                          (default: /opt/wireconf)
 #   WIRECONF_NO_SUDO   "1" to disable automatic sudo escalation (default: sudo if not root and prefix is not writable)
 #   WIRECONF_VERIFY    "0" to skip sha256 verification (discouraged; default: 1)
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 
 DEFAULT_REPO="${WIRECONF_REPO:-wagga40/Wireconf}"
 VERSION="${WIRECONF_VERSION:-latest}"
-PREFIX="${WIRECONF_PREFIX:-/opt/wireguard}"
+PREFIX="${WIRECONF_PREFIX:-/opt/wireconf}"
 VERIFY="${WIRECONF_VERIFY:-1}"
 
 _log() { printf '[install.sh] %s\n' "$*" >&2; }
@@ -93,26 +93,30 @@ if ! "${tmpdir}/wireconf" -V >/dev/null 2>&1; then
 fi
 installed_version="$("${tmpdir}/wireconf" -V 2>/dev/null | awk '{print $NF}')"
 
-bindir="${PREFIX}/bin"
-dest="${bindir}/wireconf"
+dest="${PREFIX}/wireconf"
 
 run_install() {
-  install -d "$bindir"
+  install -d "$PREFIX"
   install -m 0755 "${tmpdir}/wireconf" "$dest"
 }
 
 needs_sudo() {
+  local probe
+  probe="$PREFIX"
+  while [[ ! -e "$probe" ]]; do
+    probe="$(dirname -- "$probe")"
+  done
   [[ "${WIRECONF_NO_SUDO:-0}" != "1" ]] &&
     [[ "$(id -u)" != "0" ]] &&
-    [[ ! -w "$bindir" || ( ! -d "$bindir" && ! -w "$PREFIX" ) ]]
+    [[ ! -w "$probe" ]]
 }
 
 if needs_sudo; then
   if ! command -v sudo >/dev/null 2>&1; then
-    _err "${bindir} is not writable by $(whoami) and sudo is missing; rerun as root or set WIRECONF_PREFIX=\$HOME/.local"
+    _err "${PREFIX} is not writable by $(whoami) and sudo is missing; rerun as root or set WIRECONF_PREFIX=\$HOME/.local"
   fi
   _log "installing to ${dest} (via sudo)"
-  sudo install -d "$bindir"
+  sudo install -d "$PREFIX"
   sudo install -m 0755 "${tmpdir}/wireconf" "$dest"
 else
   _log "installing to ${dest}"
@@ -120,6 +124,6 @@ else
 fi
 
 _log "installed wireconf ${installed_version} -> ${dest}"
-if ! printf '%s' ":${PATH}:" | grep -q ":${bindir}:"; then
-  _log "note: ${bindir} is not on your PATH; add it or invoke ${dest} directly"
+if ! printf '%s' ":${PATH}:" | grep -q ":${PREFIX}:"; then
+  _log "note: ${PREFIX} is not on your PATH; add it or invoke ${dest} directly"
 fi

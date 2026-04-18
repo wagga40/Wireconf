@@ -266,6 +266,74 @@ test_peer_resolving_to_local_stays_remote() {
       wc_is_local_execution_target "peer.example.com"'
 }
 
+
+test_init_does_not_create_gitignore() {
+  local tmpdir rc=0
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/wireconf-init-test.XXXXXX")"
+
+  assert_ok "wireconf init should succeed" \
+    bash -c "cd \"$tmpdir\" && bash \"$ROOT/wireconf\" init" || rc=1
+
+  assert_ok "init should create inventory" test -f "${tmpdir}/inventory" || rc=1
+  assert_ok "init should create wireconf.env" test -f "${tmpdir}/wireconf.env" || rc=1
+  assert_not_ok "init should not create .gitignore" test -e "${tmpdir}/.gitignore" || rc=1
+
+  rm -rf -- "$tmpdir"
+  return "$rc"
+}
+
+
+test_install_script_installs_binary_at_prefix_root() {
+  local tmpdir prefix fake_bin_path fake_tool_dir rc=0
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/wireconf-install-test.XXXXXX")"
+  prefix="${tmpdir}/opt/wireconf"
+  fake_bin_path="${tmpdir}/fake-wireconf"
+  fake_tool_dir="${tmpdir}/tools"
+  mkdir -p "$fake_tool_dir"
+
+  cat >"$fake_bin_path" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-V" ]]; then
+  printf '%s\n' 'wireconf vtest'
+  exit 0
+fi
+exit 0
+EOF
+  chmod 0755 "$fake_bin_path"
+
+  cat >"${fake_tool_dir}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out=""
+while (($#)); do
+  case "$1" in
+    -o)
+      out="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cp "$WIRECONF_FAKE_BINARY" "$out"
+EOF
+  chmod 0755 "${fake_tool_dir}/curl"
+
+  assert_ok "install.sh should place binary at <prefix>/wireconf" \
+    env PATH="${fake_tool_dir}:$PATH" \
+      WIRECONF_PREFIX="$prefix" \
+      WIRECONF_VERIFY=0 \
+      WIRECONF_FAKE_BINARY="$fake_bin_path" \
+      bash "$ROOT/scripts/install.sh" || rc=1
+
+  assert_ok "binary should exist at prefix root" test -x "${prefix}/wireconf" || rc=1
+  assert_not_ok "binary should not be installed under bin/" test -e "${prefix}/bin/wireconf" || rc=1
+
+  rm -rf -- "$tmpdir"
+  return "$rc"
+}
+
 run_test test_endpoint_defaults_strip_ssh_user
 run_test test_ip_allocator_rejects_broadcast_capacity
 run_test test_removed_host_uses_saved_ssh_port_hint
@@ -283,6 +351,8 @@ run_test test_doctor_mark_fail_bumps_counters
 run_test test_bootstrap_user_for_target
 run_test test_hub_resolving_to_local_runs_as_local
 run_test test_peer_resolving_to_local_stays_remote
+run_test test_init_does_not_create_gitignore
+run_test test_install_script_installs_binary_at_prefix_root
 
 printf 'Passed %d tests; failed %d tests\n' "$pass_count" "$fail_count"
 [[ "$fail_count" -eq 0 ]]

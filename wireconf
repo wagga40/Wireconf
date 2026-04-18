@@ -375,12 +375,6 @@ wireconf_cmd_init() {
     created=$((created + 1))
   fi
 
-  if [[ ! -e "${PWD}/.gitignore" ]]; then
-    printf '*.privatekey\nwireconf.env\ninventory\n*.wireconf.log\n' >"${PWD}/.gitignore"
-    log_info "Created ${PWD}/.gitignore (ignores private keys, wireconf.env, inventory, action log)"
-    created=$((created + 1))
-  fi
-
   if [[ "$created" -eq 0 ]]; then
     log_warn "init: no files written. Remove or rename existing files to copy examples."
   else

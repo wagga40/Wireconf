@@ -11,7 +11,7 @@ WIRECONF_UPDATE_REPO_DEFAULT="wagga40/Wireconf"
 
 # Return the absolute path of the currently running wireconf. Follows symlinks
 # so the install ends up replacing the real file (typical layout puts the
-# binary in ${PREFIX}/bin/wireconf with no symlink, but a manual symlink setup
+# binary in ${PREFIX}/wireconf with no symlink, but a manual symlink setup
 # should still update the target).
 wc_update_resolve_self() {
   local p="${BASH_SOURCE[0]:-$0}"
