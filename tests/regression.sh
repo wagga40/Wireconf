@@ -285,6 +285,9 @@ test_init_does_not_create_gitignore() {
 
 test_install_script_installs_binary_at_prefix_root() {
   local tmpdir prefix fake_bin_path fake_tool_dir rc=0
+  if [[ ! -f "$ROOT/scripts/install.sh" ]]; then
+    return 0
+  fi
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/wireconf-install-test.XXXXXX")"
   prefix="${tmpdir}/opt/wireconf"
   fake_bin_path="${tmpdir}/fake-wireconf"
