@@ -15,13 +15,13 @@ wc_remote_epoch() {
 verify_all() {
   local i hub="${WC_SSH_TARGETS[0]}"
   wc_resolve_hub_endpoint_from_inventory || true
-  log_info "Checking WireGuard handshakes on each host..."
-  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
-    verify_handshakes "${WC_SSH_TARGETS[$i]}"
-  done
   log_info "Pinging peer VPN addresses from hub (${hub})..."
   for ((i = 1; i < ${#WC_SSH_TARGETS[@]}; i++)); do
     verify_ping_peer "$hub" "${WC_INDEX_TO_IP[$i]}"
+  done
+  log_info "Checking WireGuard handshakes on each host..."
+  for ((i = 0; i < ${#WC_SSH_TARGETS[@]}; i++)); do
+    verify_handshakes "${WC_SSH_TARGETS[$i]}"
   done
   verify_print_topology_schema
   log_info "Verify finished OK."

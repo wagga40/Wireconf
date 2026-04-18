@@ -122,6 +122,35 @@ test_verify_reads_remote_epoch() {
   assert_eq "900" "$(wc_remote_epoch testhost)" "remote epoch should come from the target host"
 }
 
+test_verify_pings_before_handshake_checks() {
+  reset_wireconf_globals
+  WC_SSH_TARGETS=("hub.example.com" "peer1.example.com" "peer2.example.com")
+  WC_INDEX_TO_IP=([0]="10.200.0.1" [1]="10.200.0.2" [2]="10.200.0.3")
+
+  local order=""
+  verify_ping_peer() {
+    order+="ping:${2};"
+  }
+  verify_handshakes() {
+    order+="handshake:${1};"
+  }
+  verify_print_topology_schema() {
+    :
+  }
+  wc_resolve_hub_endpoint_from_inventory() {
+    return 1
+  }
+  log_info() {
+    :
+  }
+
+  verify_all >/dev/null 2>&1
+  assert_eq \
+    "ping:10.200.0.2;ping:10.200.0.3;handshake:hub.example.com;handshake:peer1.example.com;handshake:peer2.example.com;" \
+    "$order" \
+    "verify should ping from hub before strict handshake checks"
+}
+
 test_inline_hosts_basic() {
   reset_wireconf_globals
   wc_load_inline_hosts "root@hub" "root@peer1" "peer2"
@@ -229,6 +258,7 @@ run_test test_endpoint_defaults_strip_ssh_user
 run_test test_ip_allocator_rejects_broadcast_capacity
 run_test test_removed_host_uses_saved_ssh_port_hint
 run_test test_verify_reads_remote_epoch
+run_test test_verify_pings_before_handshake_checks
 run_test test_inline_hosts_basic
 run_test test_inline_hosts_port_and_tunnel
 run_test test_inline_hosts_rejects_leading_dash
