@@ -5,7 +5,7 @@ set -euo pipefail
 # Capture the user-supplied WIRECONF_VERSION env (used by `wireconf update` to
 # pin the release tag) before the internal version constant below clobbers it.
 _WIRECONF_UPDATE_TARGET="${WIRECONF_VERSION:-latest}"
-WIRECONF_VERSION="0.3.2"
+WIRECONF_VERSION="0.3.3"
 _WIRECONF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$_WIRECONF_ROOT/lib/common.sh"
