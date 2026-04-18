@@ -129,7 +129,8 @@ verify_handshakes() {
 verify_ping_peer() {
   local hub_target="$1"
   local ip="$2"
-  wc_run_sudo "$hub_target" "ping -c 3 -w 5 $(printf '%q' "$ip") >/dev/null"
+  [[ -n "$ip" ]] || die "Missing peer VPN IP while verifying from hub ${hub_target}"
+  wc_run_sudo "$hub_target" "ping -q -c 3 -w 5 $(printf '%q' "$ip")"
   log_info "Hub reached peer VPN IP ${ip}"
 }
 
@@ -145,7 +146,7 @@ status_all() {
   printf '\n' >&2
   log_info "Pinging peer VPN addresses from hub (${hub})..."
   for ((i = 1; i < ${#WC_SSH_TARGETS[@]}; i++)); do
-    if wc_run_sudo "$hub" "ping -c 1 -w 3 $(printf '%q' "${WC_INDEX_TO_IP[$i]}") >/dev/null 2>&1"; then
+    if wc_run_sudo "$hub" "ping -q -c 1 -w 3 $(printf '%q' "${WC_INDEX_TO_IP[$i]}")"; then
       log_detail_ok "hub -> ${WC_INDEX_TO_IP[$i]} (${WC_SSH_TARGETS[$i]})"
     else
       log_err "hub -> ${WC_INDEX_TO_IP[$i]} (${WC_SSH_TARGETS[$i]}) UNREACHABLE"
