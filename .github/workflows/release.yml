@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install go-task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Verify tag matches WIRECONF_VERSION
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          wc_version="$(awk -F'"' '/^WIRECONF_VERSION=/ {print $2; exit}' wireconf)"
+          if [ "$version" != "$wc_version" ]; then
+            echo "tag ${tag} (version ${version}) does not match WIRECONF_VERSION=${wc_version}" >&2
+            exit 1
+          fi
+          echo "tag ${tag} matches WIRECONF_VERSION=${wc_version}"
+
+      - name: Lint
+        run: task lint
+
+      - name: Regression tests (source tree)
+        run: task test
+
+      - name: Build single-file artifact
+        run: task build
+
+      - name: Regression tests (single-file build)
+        run: task test-dist
+
+      - name: Verify built artifacts
+        run: |
+          set -euo pipefail
+          test -f dist/wireconf
+          test -f dist/wireconf.sha256
+          ./dist/wireconf -V
+          want="$(awk '{print $1}' dist/wireconf.sha256)"
+          got="$(sha256sum dist/wireconf | awk '{print $1}')"
+          [ "$want" = "$got" ] || { echo "sha256 mismatch between dist/wireconf.sha256 and dist/wireconf" >&2; exit 1; }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/wireconf
+            dist/wireconf.sha256

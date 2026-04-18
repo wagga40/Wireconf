@@ -6,6 +6,7 @@ inventory
 
 # Build artifacts
 /dist/
+/.task/
 
 # macOS
 .DS_Store

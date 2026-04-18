@@ -9,7 +9,7 @@
 # Environment variables (all optional):
 #   WIRECONF_REPO      owner/name       GitHub repo           (default: derived from script URL if piped; falls back to the value embedded below)
 #   WIRECONF_VERSION   tag (e.g. v0.3.0) or "latest"          (default: latest)
-#   WIRECONF_PREFIX    install prefix                          (default: /usr/local)
+#   WIRECONF_PREFIX    install prefix                          (default: /opt/wireguard)
 #   WIRECONF_NO_SUDO   "1" to disable automatic sudo escalation (default: sudo if not root and prefix is not writable)
 #   WIRECONF_VERIFY    "0" to skip sha256 verification (discouraged; default: 1)
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 
 DEFAULT_REPO="${WIRECONF_REPO:-wagga40/Wireconf}"
 VERSION="${WIRECONF_VERSION:-latest}"
-PREFIX="${WIRECONF_PREFIX:-/usr/local}"
+PREFIX="${WIRECONF_PREFIX:-/opt/wireguard}"
 VERIFY="${WIRECONF_VERIFY:-1}"
 
 _log() { printf '[install.sh] %s\n' "$*" >&2; }

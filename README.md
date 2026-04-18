@@ -27,18 +27,15 @@ flowchart LR
 
 Pick one:
 
+### Bash one-liner 
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wagga40/Wireconf/main/scripts/install.sh | bash
 ```
 
-Downloads the latest single-file release, verifies its SHA-256, and installs it to `/usr/local/bin/wireconf` (override with `WIRECONF_PREFIX=$HOME/.local bash`).
+Downloads the latest single-file release, verifies its SHA-256, and installs it to `/opt/wireguard/bin/wireconf` (override with `WIRECONF_PREFIX=$HOME/.local bash`). Add `/opt/wireguard/bin` to your `PATH` if it is not already there. Keep wireconf up to date later with `wireconf update`.
 
-```bash
-git clone https://github.com/wagga40/Wireconf.git && cd Wireconf
-task install PREFIX=/usr/local   # copies lib/ and examples/ next to the binary
-```
-
-Dev installs use [go-task](https://taskfile.dev) — install once with `brew install go-task` (macOS) or `sudo snap install task --classic` / the upstream installer on Linux. Run `task --list` to see every target.
+### Git
 
 ```bash
 git clone https://github.com/wagga40/Wireconf.git && cd Wireconf
@@ -133,8 +130,22 @@ Listed in typical lifecycle order. Run `./wireconf -h` for the full flag list.
 | `remove-peer HOST` | Remove a peer line from the inventory. Cannot remove the hub. |
 | `teardown` | Stop and disable WireGuard on all inventory hosts. `-f` also removes config files. |
 | `clean` | Delete local `inventory`, `*.wireconf.*` sidecars, and `wireconf.env`. Prompts first; `-y` skips. |
+| `update` | Fetch the latest single-file release from GitHub, verify SHA-256, replace the running binary. Single-file installs only. |
 
 After adding or removing peers, run `plan` then `apply` to push the change.
+
+### Updating
+
+For single-file installs (the `curl \| bash` path), run:
+
+```bash
+wireconf update                                # fetch latest, verify sha256, replace binary
+WIRECONF_VERSION=v0.3.0 wireconf update        # pin a specific tag
+WIRECONF_REPO=owner/fork wireconf update       # pull from a fork
+WIRECONF_VERIFY=0 wireconf update              # skip checksum (discouraged)
+```
+
+`wireconf update` refuses to run from a source checkout — use `git pull` or `task install` / `task dist-install` for those layouts.
 
 ## Inventory format
 

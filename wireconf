@@ -2,7 +2,10 @@
 # shellcheck shell=bash
 set -euo pipefail
 
-WIRECONF_VERSION="0.2.0"
+# Capture the user-supplied WIRECONF_VERSION env (used by `wireconf update` to
+# pin the release tag) before the internal version constant below clobbers it.
+_WIRECONF_UPDATE_TARGET="${WIRECONF_VERSION:-latest}"
+WIRECONF_VERSION="0.3.0"
 _WIRECONF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$_WIRECONF_ROOT/lib/common.sh"
@@ -26,6 +29,8 @@ source "$_WIRECONF_ROOT/lib/plan_checks.sh"
 source "$_WIRECONF_ROOT/lib/doctor.sh"
 # shellcheck source=lib/bootstrap.sh
 source "$_WIRECONF_ROOT/lib/bootstrap.sh"
+# shellcheck source=lib/update.sh
+source "$_WIRECONF_ROOT/lib/update.sh"
 
 # figlet -f small Wireconf (short banner; no runtime figlet dependency)
 wireconf_print_banner() {
@@ -75,6 +80,7 @@ usage() {
   log_help_cmd "status" "non-fatal per-host interface and peer health check"
   log_help_cmd "teardown" "stop and disable WireGuard on all inventory hosts"
   log_help_cmd "clean" "remove inventory, \${INVENTORY}.wireconf.* sidecars, ./wireconf.env (prompt; -y skips)"
+  log_help_cmd "update" "self-update single-file install (env: WIRECONF_REPO, WIRECONF_VERSION, WIRECONF_VERIFY)"
   log_help_cmd "add-peer" "optional: append one inventory line (or edit inventory by hand)"
   log_help_cmd "remove-peer" "optional: drop line by HOST (or edit inventory by hand)"
   printf '\n' >&2
@@ -511,7 +517,7 @@ parse_cli() {
         WC_SHOW_REDACT=1
         shift
         ;;
-      plan | apply | show | verify | test | status | teardown | init | clean)
+      plan | apply | show | verify | test | status | teardown | init | clean | update)
         WC_SUBCMD="$1"
         [[ "$WC_SUBCMD" == "test" ]] && WC_SUBCMD="verify"
         shift
@@ -576,6 +582,10 @@ main() {
   if [[ "${WC_SUBCMD}" == "clean" ]]; then
     wireconf_cmd_clean
     exit 0
+  fi
+  if [[ "${WC_SUBCMD}" == "update" ]]; then
+    wireconf_cmd_update
+    exit $?
   fi
 
   # `up` with inline HOST args bypasses the inventory file entirely (stateless).

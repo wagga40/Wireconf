@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Offline basic commands (no network targets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install go-task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Bash syntax check
+        run: bash -n wireconf lib/*.sh scripts/*.sh tests/*.sh
+
+      - name: Shellcheck (errors only)
+        run: task lint
+
+      - name: Regression tests (source tree)
+        run: task test
+
+      - name: Build single-file artifact
+        run: task build
+
+      - name: Regression tests (single-file build)
+        run: task test-dist
+
+      - name: Source-tree CLI smoke tests
+        run: |
+          set -euo pipefail
+          ./wireconf -V
+          ./wireconf --version
+          ./wireconf -h > /tmp/help-src.out 2>&1
+          grep -q 'update' /tmp/help-src.out
+          grep -q 'init' /tmp/help-src.out
+          grep -q 'clean' /tmp/help-src.out
+
+      - name: Single-file CLI smoke tests
+        run: |
+          set -euo pipefail
+          ./dist/wireconf -V
+          ./dist/wireconf --version
+          ./dist/wireconf -h > /tmp/help-dist.out 2>&1
+          grep -q 'update' /tmp/help-dist.out
+
+      - name: init + clean round-trip (single-file, temp workspace)
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          cp dist/wireconf "$workdir/wireconf"
+          cd "$workdir"
+          ./wireconf init
+          test -f inventory
+          test -f wireconf.env
+          grep -q '^INVENTORY=inventory$' wireconf.env
+          ./wireconf -y clean
+          test ! -f inventory
+          test ! -f wireconf.env
+
+      - name: update rejects source-tree install (no network required)
+        run: |
+          set -euo pipefail
+          rc=0
+          ./wireconf update > /tmp/update-src.out 2>&1 || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "source-tree update should have failed, got exit 0" >&2
+            cat /tmp/update-src.out >&2
+            exit 1
+          fi
+          grep -q 'only supported for single-file installs' /tmp/update-src.out
+
+      - name: Install script syntax check
+        run: bash -n scripts/install.sh

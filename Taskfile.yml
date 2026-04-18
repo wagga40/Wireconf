@@ -15,14 +15,14 @@
 #   task test-dist          # run tests/regression.sh against dist/wireconf
 #   task clean              # remove dist/
 #
-# Variables (override on the CLI, e.g. `task install PREFIX=/opt/local`):
-#   PREFIX   install prefix (default /usr/local)
+# Variables (override on the CLI, e.g. `task install PREFIX=/usr/local`):
+#   PREFIX   install prefix (default /opt/wireguard)
 #   DESTDIR  staging root prepended to every install path (for packagers)
 
 version: '3'
 
 vars:
-  PREFIX: '{{.PREFIX | default "/usr/local"}}'
+  PREFIX: '{{.PREFIX | default "/opt/wireguard"}}'
   DESTDIR: '{{.DESTDIR | default ""}}'
   BINDIR: '{{.DESTDIR}}{{.PREFIX}}/bin'
   LIBEXECDIR: '{{.DESTDIR}}{{.PREFIX}}/libexec/wireconf'
