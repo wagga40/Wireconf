@@ -283,6 +283,50 @@ test_init_does_not_create_gitignore() {
 }
 
 
+test_teardown_chmods_conf_before_wg_quick_runs() {
+  reset_wireconf_globals
+  WC_IFACE="wg0"
+  local order=""
+  wc_run_sudo() {
+    if [[ "${2:-}" == *"chmod 0600"* ]]; then
+      order+="chmod;"
+    elif [[ "${2:-}" == *systemctl* ]]; then
+      order+="systemctl;"
+    elif [[ "${2:-}" == *wg-quick* ]]; then
+      order+="wg-quick;"
+    elif [[ "${2:-}" == *"rm -f"* ]]; then
+      order+="rm;"
+    fi
+    return 0
+  }
+
+  wg_teardown_on_host "host.example.com" 0 >/dev/null 2>&1
+  assert_eq "chmod;systemctl;wg-quick;" "$order" \
+    "teardown should tighten /etc/wireguard/<iface>.conf to 0600 before any wg-quick/systemctl call"
+}
+
+test_teardown_force_rm_keeps_chmod_first() {
+  reset_wireconf_globals
+  WC_IFACE="wg0"
+  local order=""
+  wc_run_sudo() {
+    if [[ "${2:-}" == *"chmod 0600"* ]]; then
+      order+="chmod;"
+    elif [[ "${2:-}" == *systemctl* ]]; then
+      order+="systemctl;"
+    elif [[ "${2:-}" == *wg-quick* ]]; then
+      order+="wg-quick;"
+    elif [[ "${2:-}" == *"rm -f"* ]]; then
+      order+="rm;"
+    fi
+    return 0
+  }
+
+  wg_teardown_on_host "host.example.com" 1 >/dev/null 2>&1
+  assert_eq "chmod;systemctl;wg-quick;rm;" "$order" \
+    "teardown -f should still chmod first, then stop+disable, then remove the conf"
+}
+
 test_install_script_installs_binary_at_prefix_root() {
   local tmpdir prefix fake_bin_path fake_tool_dir rc=0
   if [[ ! -f "$ROOT/scripts/install.sh" ]]; then
@@ -355,6 +399,8 @@ run_test test_bootstrap_user_for_target
 run_test test_hub_resolving_to_local_runs_as_local
 run_test test_peer_resolving_to_local_stays_remote
 run_test test_init_does_not_create_gitignore
+run_test test_teardown_chmods_conf_before_wg_quick_runs
+run_test test_teardown_force_rm_keeps_chmod_first
 run_test test_install_script_installs_binary_at_prefix_root
 
 printf 'Passed %d tests; failed %d tests\n' "$pass_count" "$fail_count"

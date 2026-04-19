@@ -7,10 +7,15 @@ wg_teardown_on_host() {
   local target="$1"
   local force_rm="${2:-0}"
   local unit="wg-quick@${WC_IFACE}.service"
+  local conf="/etc/wireguard/${WC_IFACE}.conf"
+  # Tighten perms before wg-quick reads the conf (via the unit's ExecStop or the direct
+  # call below). Skips the "Warning: '<conf>' is world accessible" noise when the file
+  # pre-dates wireconf or was created manually under root's default umask (mode 0644).
+  wc_run_sudo "$target" "test ! -e $(printf '%q' "$conf") || chmod 0600 $(printf '%q' "$conf")" 2>/dev/null || true
   wc_run_sudo "$target" "systemctl disable --now $(printf '%q' "$unit") 2>/dev/null || true"
   wc_run_sudo "$target" "wg-quick down $(printf '%q' "$WC_IFACE") 2>/dev/null || true"
   if [[ "$force_rm" -eq 1 ]]; then
-    wc_run_sudo "$target" "rm -f $(printf '%q' "/etc/wireguard/${WC_IFACE}.conf")" 2>/dev/null || true
+    wc_run_sudo "$target" "rm -f $(printf '%q' "$conf")" 2>/dev/null || true
   fi
 }
 
